@@ -128,7 +128,7 @@ void setup() {
   while ((double)millis()/1000 - start < 80){//測定
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
-    ps[i].temps = (double)temp;
+    ps[i].temp = (double)temp;
     ps[i].timestamp = (double)millis()/1000 - start;
 
     k = linearRegressionSlope(ps,N);
@@ -199,9 +199,6 @@ void setup() {
     DTcont(DT);
   }
 
-  double max_temp = 0;
-  int flg = 0;
-  double DTbuf = DT;
   DT = 0;
 
   while (1){//降下測定
