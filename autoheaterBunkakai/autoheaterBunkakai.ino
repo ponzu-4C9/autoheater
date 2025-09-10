@@ -201,18 +201,35 @@ void setup() {
 
   DT = 0;
 
-  while (1){//降下測定
+  const int ps1size = 1024;
+  Point ps1[ps1size] = {0};
+  double max_temp = 0;
+  int max_i = 0;
+  start = (double)millis()/1000;
+  i = 0;
+  while (1){//降下測定（
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
+    if(temp > 130 - 2){
+      break;
+    }
+
+    if(temp > max_temp){
+      max_temp = temp;
+      max_i = i;
+    }
+
+    ps1[i].timestamp = (double)millis()/1000 - start;
+    ps1[i].temp = temp;
+    i++;
     
     double t = (double)millis()/1000;
     if(t != pret){
       Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
     }
     pret = t;
-
 
     char buf[64];
     lcd.setCursor(0,0);
@@ -225,6 +242,18 @@ void setup() {
 
     DTcont(DT);
   }
+
+  //最大値を迎えた時間より以前をすべて無効点にする
+  for(i = 0; i < max_i;i++){
+    ps1[i].timestamp = 0.0;
+    ps1[i].temp = 0.0;
+  }
+
+  //傾きを調べる
+  double dk = linearRegressionSlope(ps1,ps1size);
+
+
+
 }
 
 void loop() {
