@@ -83,9 +83,6 @@ void setup() {
   thermoCouple.setSPIspeed(4000000);
   delay(1000);
 
-  lcd.init();
-  lcd.backlight();
-
   //窯の温度上昇度合を測定
   DT = 1;
   double start = (double)millis()/1000;
