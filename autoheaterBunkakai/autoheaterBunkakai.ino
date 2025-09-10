@@ -15,7 +15,12 @@ const int selectPin = 19;//co
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27,20,4);
 
-double linearRegressionSlope(double x[], int n, double y[]) {
+typedef struct point {
+  double temp;
+  double timestamp;
+} Point;
+
+double linearRegressionSlope(Point ps[], int n) {
   double sumx = 0.0;
   double sumy = 0.0;
   double sumxy = 0.0;
@@ -24,10 +29,10 @@ double linearRegressionSlope(double x[], int n, double y[]) {
 
   for (int i = 0; i < n; ++i) {
     // 無効点のスキップ (x==0 && y==0)
-    if (x[i] == 0.0 && y[i] == 0.0) continue;
+    if (ps[i].timestamp == 0.0 && ps[i].temp == 0.0) continue;
 
-    double xi = x[i];
-    double yi = y[i];
+    double xi = ps[i].timestamp;
+    double yi = ps[i].temp;
 
     sumx += xi;
     sumy += yi;
@@ -64,11 +69,13 @@ double temp;
 int state = 0;
 double k;
 
-void DTcont(double DT){
+void DTcont(double duty){
+  if(duty < 0) duty = 0;
+  if(duty > 1) duty = 1;
   digitalWrite(SSRPin, HIGH);
-  delay((int)(900 * DT));
+  delay((int)(900 * duty));
   digitalWrite(SSRPin, LOW);
-  delay((int)(900 * (1 - DT)));
+  delay((int)(900 * (1 - duty)));
 }
 
 double pret = 0;
@@ -82,6 +89,9 @@ void setup() {
   thermoCouple.begin();
   thermoCouple.setSPIspeed(4000000);
   delay(1000);
+
+  lcd.init();
+  lcd.backlight();
 
   //窯の温度上昇度合を測定
   DT = 1;
@@ -109,18 +119,19 @@ void setup() {
   }
 
   start = (double)millis()/1000;
+
   const int N = 100;
-  double temps[N] = {0};
-  double timestamp[N] = {0};
+  Point ps[N] = {0};
+
   int i = 0;
   
   while ((double)millis()/1000 - start < 80){//測定
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
-    temps[i] = (double)temp;
-    timestamp[i] = (double)millis()/1000 - start;
+    ps[i].temps = (double)temp;
+    ps[i].timestamp = (double)millis()/1000 - start;
 
-    k = linearRegressionSlope(timestamp,N,temps);
+    k = linearRegressionSlope(ps,N);
 
     char buf[64];
     lcd.setCursor(0,0);
@@ -176,11 +187,6 @@ void setup() {
     }
     pret = t;
 
-    if(DT < 0) DT = 0;
-    if(DT > 1) DT = 1;
-    
-
-
     char buf[64];
     lcd.setCursor(0,0);
     snprintf(buf, sizeof(buf), "k=%f", k);
@@ -198,22 +204,10 @@ void setup() {
   double DTbuf = DT;
   DT = 0;
 
-  while (1){//90度まで温度上昇
+  while (1){//降下測定
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
-
-    if(temp > max_temp){
-      max_temp = temp;
-    }
-
-    if(DT == 0 && temp < 130 - (max_temp - 130) -1){
-      DT = DTbuf;
-    }
-    if(DT == DTbuf && temp > 130 - (max_temp - 130)){
-      DT = 0;
-    }
-
 
     
     double t = (double)millis()/1000;
@@ -221,10 +215,6 @@ void setup() {
       Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
     }
     pret = t;
-
-
-    if(DT < 0) DT = 0;
-    if(DT > 1) DT = 1;
 
 
     char buf[64];
