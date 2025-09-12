@@ -15,7 +15,12 @@ const int selectPin = 19;//co
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27,20,4);
 
-double linearRegressionSlope(double x[], int n, double y[]) {
+typedef struct point {
+  double temp;
+  double timestamp;
+} Point;
+
+double linearRegressionSlope(Point ps[], int n) {
   double sumx = 0.0;
   double sumy = 0.0;
   double sumxy = 0.0;
@@ -24,10 +29,10 @@ double linearRegressionSlope(double x[], int n, double y[]) {
 
   for (int i = 0; i < n; ++i) {
     // 無効点のスキップ (x==0 && y==0)
-    if (x[i] == 0.0 && y[i] == 0.0) continue;
+    if (ps[i].timestamp == 0.0 && ps[i].temp == 0.0) continue;
 
-    double xi = x[i];
-    double yi = y[i];
+    double xi = ps[i].timestamp;
+    double yi = ps[i].temp;
 
     sumx += xi;
     sumy += yi;
@@ -64,11 +69,13 @@ double temp;
 int state = 0;
 double k;
 
-void DTcont(double DT){
+void DTcont(double duty){
+  if(duty < 0) duty = 0;
+  if(duty > 1) duty = 1;
   digitalWrite(SSRPin, HIGH);
-  delay((int)(900 * DT));
+  delay((int)(900 * duty));
   digitalWrite(SSRPin, LOW);
-  delay((int)(900 * (1 - DT)));
+  delay((int)(900 * (1 - duty)));
 }
 
 double pret = 0;
@@ -112,18 +119,19 @@ void setup() {
   }
 
   start = (double)millis()/1000;
+
   const int N = 100;
-  double temps[N] = {0};
-  double timestamp[N] = {0};
+  Point ps[N] = {0};
+
   int i = 0;
   
   while ((double)millis()/1000 - start < 80){//測定
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
-    temps[i] = (double)temp;
-    timestamp[i] = (double)millis()/1000 - start;
+    ps[i].temp = (double)temp;
+    ps[i].timestamp = (double)millis()/1000 - start;
 
-    k = linearRegressionSlope(timestamp,N,temps);
+    k = linearRegressionSlope(ps,N);
 
     char buf[64];
     lcd.setCursor(0,0);
@@ -144,6 +152,7 @@ void setup() {
 
     i++;
   }
+
   k = k/DT;
   DT = 0.05/k;
 
@@ -179,11 +188,6 @@ void setup() {
     }
     pret = t;
 
-    if(DT < 0) DT = 0;
-    if(DT > 1) DT = 1;
-    
-
-
     char buf[64];
     lcd.setCursor(0,0);
     snprintf(buf, sizeof(buf), "k=%f", k);
@@ -196,25 +200,74 @@ void setup() {
     DTcont(DT);
   }
 
-  double max_temp = 0;
-  int flg = 0;
-  double DTbuf = DT;
   DT = 0;
 
-  while (1){//90度まで温度上昇
+  const int ps1size = 1024;
+  Point ps1[ps1size] = {0};
+  double max_temp = 0;
+  int max_i = 0;
+  start = (double)millis()/1000;
+  i = 0;
+  while (1){//降下測定
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
-    if(temp > max_temp){
-      max_temp = temp;
+    if(temp < 130 - 2){//目標温度より二度下がったらbreak
+      break;
     }
 
-    if(DT == 0 && temp < 130 - (max_temp - 130) -1){
-      DT = DTbuf;
+    if(temp > max_temp){
+      max_temp = temp;
+      max_i = i;
     }
-    if(DT == DTbuf && temp > 130 - (max_temp - 130)){
-      DT = 0;
+
+    ps1[i].timestamp = (double)millis()/1000 - start;
+    ps1[i].temp = temp;
+    i++;
+    
+    double t = (double)millis()/1000;
+    if(t != pret){
+      Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
+    }
+    pret = t;
+
+    char buf[64];
+    lcd.setCursor(0,0);
+    snprintf(buf, sizeof(buf), "Measuring...%d",i);
+    lcd.print(buf);
+
+    lcd.setCursor(0,1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
+
+    DTcont(DT);
+  }
+
+  //最大値を迎えた時間より以前をすべて無効点にする
+  for(i = 0; i < max_i;i++){
+    ps1[i].timestamp = 0.0;
+    ps1[i].temp = 0.0;
+  }
+
+  //傾きを調べる
+  double l = linearRegressionSlope(ps1,ps1size);
+
+  //最適な出力を
+  DT = (l/k)*(130 - 30);
+
+  while (1){//130度で維持
+    //温度計読み込み
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
+
+    if((double)millis()/1000 - timestamp0 > 60){
+      if(temp > 130){
+        DT -= 0.01;
+      }else{
+        DT += 0.01;
+      }
+      timestamp0 = (double)millis()/1000;
     }
 
 
@@ -225,14 +278,9 @@ void setup() {
     }
     pret = t;
 
-
-    if(DT < 0) DT = 0;
-    if(DT > 1) DT = 1;
-
-
     char buf[64];
     lcd.setCursor(0,0);
-    snprintf(buf, sizeof(buf), "maxtemp %.2f", max_temp);
+    snprintf(buf, sizeof(buf), "%.3f %.3f", k,l);
     lcd.print(buf);
 
     lcd.setCursor(0,1);
@@ -241,6 +289,7 @@ void setup() {
 
     DTcont(DT);
   }
+
 }
 
 void loop() {
