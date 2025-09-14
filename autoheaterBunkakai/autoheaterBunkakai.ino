@@ -12,6 +12,8 @@ const int dataPin   = 4;//so
 const int clockPin  = 23;//sck
 const int selectPin = 19;//co
 
+#define target 130
+
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27,20,4);
 
@@ -73,9 +75,9 @@ void DTcont(double duty){
   if(duty < 0) duty = 0;
   if(duty > 1) duty = 1;
   digitalWrite(SSRPin, HIGH);
-  delay((int)(900 * duty));
+  delay((int)(1000 * duty));
   digitalWrite(SSRPin, LOW);
-  delay((int)(900 * (1 - duty)));
+  delay((int)(1000 * (1 - duty)));
 }
 
 double pret = 0;
@@ -92,6 +94,9 @@ void setup() {
 
   lcd.init();
   lcd.backlight();
+
+  const int N = 2000;
+  static Point ps[N] = {0};
 
   //窯の温度上昇度合を測定
   DT = 1;
@@ -120,9 +125,6 @@ void setup() {
 
   start = (double)millis()/1000;
 
-  const int N = 100;
-  Point ps[N] = {0};
-
   int i = 0;
   
   while ((double)millis()/1000 - start < 80){//測定
@@ -131,7 +133,7 @@ void setup() {
     ps[i].temp = (double)temp;
     ps[i].timestamp = (double)millis()/1000 - start;
 
-    k = linearRegressionSlope(ps,N);
+    k = linearRegressionSlope(ps,N)/DT;
 
     char buf[64];
     lcd.setCursor(0,0);
@@ -139,7 +141,7 @@ void setup() {
     lcd.print(buf);
 
     lcd.setCursor(0,1);
-    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    snprintf(buf, sizeof(buf), "%.2f|%.4f", temp, DT);
     lcd.print(buf);
 
     double t = (double)millis()/1000;
@@ -153,19 +155,18 @@ void setup() {
     i++;
   }
 
-  k = k/DT;
   DT = 0.05/k;
 
   double timestamp0 = (double)millis()/1000;//一分に一回出力見直し用タイムスタンプ
   double pre_temp = temp;//前回の温度 一分に一回出力見直し用
 
-  while (1){//90度まで温度上昇
+  while (1){//target度まで温度上昇
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
     if(10 < temp && temp < 200){
-      if(temp > 130){
+      if(temp > target){
         break;
       }
     }
@@ -202,8 +203,11 @@ void setup() {
 
   DT = 0;
 
-  const int ps1size = 1024;
-  Point ps1[ps1size] = {0};
+  for(i = 0;i < N;i++){
+    ps[i].timestamp = 0;
+    ps[i].temp = 0;
+  }
+
   double max_temp = 0;
   int max_i = 0;
   start = (double)millis()/1000;
@@ -213,7 +217,7 @@ void setup() {
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
-    if(temp < 130 - 2){//目標温度より二度下がったらbreak
+    if(temp < target - 1 || i >= N){//目標温度より一度下がったらbreak
       break;
     }
 
@@ -222,8 +226,8 @@ void setup() {
       max_i = i;
     }
 
-    ps1[i].timestamp = (double)millis()/1000 - start;
-    ps1[i].temp = temp;
+    ps[i].timestamp = (double)millis()/1000 - start;
+    ps[i].temp = temp;
     i++;
     
     double t = (double)millis()/1000;
@@ -246,32 +250,33 @@ void setup() {
 
   //最大値を迎えた時間より以前をすべて無効点にする
   for(i = 0; i < max_i;i++){
-    ps1[i].timestamp = 0.0;
-    ps1[i].temp = 0.0;
+    ps[i].timestamp = 0.0;
+    ps[i].temp = 0.0;
   }
 
-  //傾きを調べる
-  double l = linearRegressionSlope(ps1,ps1size);
+  //dT/dtを調べる
+  double dk = linearRegressionSlope(ps,N);
+
+  //ニュートンの冷却法則の式の比例定数を出す
+  double l = dk/(target - 30); // T-T（室温）
 
   //最適な出力を
-  DT = (l/k)*(130 - 30);
+  DT = (-l/k)*(target - 30);// T-T（室温）
 
-  while (1){//130度で維持
+  while (1){//target度で維持
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
     if((double)millis()/1000 - timestamp0 > 60){
-      if(temp > 130){
-        DT -= 0.01;
+      if(temp > target){
+        DT -= 0.005;
       }else{
-        DT += 0.01;
+        DT += 0.005;
       }
       timestamp0 = (double)millis()/1000;
     }
 
-
-    
     double t = (double)millis()/1000;
     if(t != pret){
       Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
