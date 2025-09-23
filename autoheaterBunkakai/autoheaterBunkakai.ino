@@ -12,7 +12,10 @@ const int dataPin   = 4;//so
 const int clockPin  = 23;//sck
 const int selectPin = 19;//co
 
-#define target 130
+#define target 90
+#define target2 130
+
+#define roomtemp 30
 
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27,20,4);
@@ -65,11 +68,19 @@ double linearRegressionSlope(Point ps[], int n) {
   return numerator / denominator;
 }
 
+void psclear(Point ps[], int n){
+  for(int i = 0;i < n;i++){
+    ps[i].timestamp = 0;
+    ps[i].temp = 0;
+  }
+}
+
 
 double DT;
 double temp;
 int state = 0;
 double k;
+double t;
 
 void DTcont(double duty){
   if(duty < 0) duty = 0;
@@ -114,7 +125,7 @@ void setup() {
     snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
     lcd.print(buf);
 
-    double t = (double)millis()/1000;
+    t = (double)millis()/1000;
     if(t != pret){
       Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
     }
@@ -127,9 +138,10 @@ void setup() {
 
   int i = 0;
   
-  while ((double)millis()/1000 - start < 80){//測定
+  while ((double)millis()/1000 - start < 70){//測定
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
+
     ps[i].temp = (double)temp;
     ps[i].timestamp = (double)millis()/1000 - start;
 
@@ -144,7 +156,7 @@ void setup() {
     snprintf(buf, sizeof(buf), "%.2f|%.4f", temp, DT);
     lcd.print(buf);
 
-    double t = (double)millis()/1000;
+    t = (double)millis()/1000;
     if(t != pret){
       Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
     }
@@ -155,33 +167,41 @@ void setup() {
     i++;
   }
 
-  DT = 0.05/k;
+  DT = (3.0/60)/k;
 
   double timestamp0 = (double)millis()/1000;//一分に一回出力見直し用タイムスタンプ
-  double pre_temp = temp;//前回の温度 一分に一回出力見直し用
+  start = (double)millis()/1000;
+
+  psclear(ps,N);
+  start = (double)millis()/1000;
+  i = 0;
 
   while (1){//target度まで温度上昇
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
-    if(10 < temp && temp < 200){
+    if(10 < temp && temp < 500){
       if(temp > target){
         break;
       }
     }
 
+    ps[i].temp = (double)temp;
+    ps[i].timestamp = (double)millis()/1000 - start;
+    i++;
+
     if((double)millis()/1000 - timestamp0 > 60){
-      if(temp - pre_temp > 3){
+      if(linearRegressionSlope(ps,N) > (3.0/60)){
         DT -= 0.01;
       }else{
-        DT += 0.01;
+        DT += 0.005;
       }
+      psclear(ps,N);
+      start = (double)millis()/1000;
+      i = 0;
       timestamp0 = (double)millis()/1000;
-      pre_temp = temp;
     }
-
-
     
     double t = (double)millis()/1000;
     if(t != pret){
@@ -203,10 +223,7 @@ void setup() {
 
   DT = 0;
 
-  for(i = 0;i < N;i++){
-    ps[i].timestamp = 0;
-    ps[i].temp = 0;
-  }
+  psclear(ps,N);
 
   double max_temp = 0;
   int max_i = 0;
@@ -217,7 +234,7 @@ void setup() {
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
-    if(temp < target - 1 || i >= N){//目標温度より一度下がったらbreak
+    if(temp < target - 2 || i >= N){//目標温度より2度下がったらbreak
       break;
     }
 
@@ -229,12 +246,9 @@ void setup() {
     ps[i].timestamp = (double)millis()/1000 - start;
     ps[i].temp = temp;
     i++;
-    
-    double t = (double)millis()/1000;
-    if(t != pret){
-      Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
-    }
-    pret = t;
+
+    t = (double)millis()/1000;
+    Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
 
     char buf[64];
     lcd.setCursor(0,0);
@@ -258,30 +272,111 @@ void setup() {
   double dk = linearRegressionSlope(ps,N);
 
   //ニュートンの冷却法則の式の比例定数を出す
-  double l = dk/(target - 30); // T-T（室温）
+  double l = dk/(target - roomtemp); // T-T（室温）
 
   //最適な出力を
-  DT = (-l/k)*(target - 30);// T-T（室温）
+  DT = -dk/k;// T-(T（室温）)
 
-  while (1){//target度で維持
+  start = (double)millis()/1000;
+  lcd.clear();
+  while ((double)millis()/1000 - start < 30*60){//target度で30分維持
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
-    if((double)millis()/1000 - timestamp0 > 60){
+    if((double)millis()/1000 - timestamp0 > 180){
       if(temp > target){
-        DT -= 0.005;
-      }else{
-        DT += 0.005;
+        DT -= 0.01;
+      }else if(temp < target){
+        DT += 0.01;
       }
       timestamp0 = (double)millis()/1000;
     }
 
-    double t = (double)millis()/1000;
-    if(t != pret){
-      Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
+    t = (double)millis()/1000;
+    Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
+
+    char buf[64];
+    lcd.setCursor(0,0);
+    snprintf(buf, sizeof(buf), "%.3f %.f", k,l);
+    lcd.print(buf);
+
+    lcd.setCursor(0,1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
+
+    DTcont(DT);
+  }
+
+  DT = ((3.0/60) - l*(temp - roomtemp))/k;
+
+  psclear(ps,N);
+  start = (double)millis()/1000;
+  i = 0;
+
+  while (1){//target2度まで温度上昇
+    //温度計読み込み
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
+
+    if(10 < temp && temp < 500){
+      if(temp > target2){
+        break;
+      }
     }
-    pret = t;
+
+    ps[i].temp = (double)temp;
+    ps[i].timestamp = (double)millis()/1000 - start;
+    i++;
+
+    if((double)millis()/1000 - timestamp0 > 60){
+      if(linearRegressionSlope(ps,N) > (3.0/60)){
+        DT -= 0.01;
+      }else{
+        DT += 0.01;
+      }
+      psclear(ps,N);
+      start = (double)millis()/1000;
+      i = 0;
+      timestamp0 = (double)millis()/1000;
+    }
+
+    t = (double)millis()/1000;
+    Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
+
+    char buf[64];
+    lcd.setCursor(0,0);
+    snprintf(buf, sizeof(buf), "k=%f", k);
+    lcd.print(buf);
+
+    lcd.setCursor(0,1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
+
+    DTcont(DT);
+  }
+
+  DT = (-l/k)*(target2 - roomtemp);
+
+  start = (double)millis()/1000;
+  timestamp0 = start;
+  lcd.clear();
+  while ((double)millis()/1000 - start < 90*60){//target2度で20分維持
+    //温度計読み込み
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
+
+    if((double)millis()/1000 - timestamp0 > 180){
+      if(temp > target2){
+        DT -= 0.01;
+      }else if(temp < target2){
+        DT += 0.01;
+      }
+      timestamp0 = (double)millis()/1000;
+    }
+
+    t = (double)millis()/1000;
+    Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
 
     char buf[64];
     lcd.setCursor(0,0);

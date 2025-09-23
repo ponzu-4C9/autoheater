@@ -18,9 +18,6 @@ uint32_t elapsed_time = 0; // state に変わった瞬間からの経過時間
 uint32_t pre_time = 0; // 1loopの経過時間（ms）を計測するためのもの
 int state = 0; // 状態
 
-// // 以前保存した値と比較して変更がある場合のみ保存するための変数
-int prev_state = -1;
-uint32_t prev_elapsed_time = 0;
 
 volatile bool buttonPressed = true;
 float temp;
@@ -47,13 +44,8 @@ void setup()
 
 }
 
-double DT = 0;
+double DT = 0.25;
 double target = 130;
-double pre_e = 0; // 前回の偏差
-double sum_e = 0;
-double Kp = 0.1;
-double Ki = 0;
-double Kd = 0.5;
 
 
 // シリアルから受け取る1行バッファ（Kp, Kd を変更するため）
@@ -80,14 +72,9 @@ static void trimLineInPlace(char* buf, size_t& len) {
 static void processLine() {
   lineBuf[lineLen] = '\0';
   trimLineInPlace(lineBuf, lineLen);
-  if (lineBuf[0] == 't') {
-    target = strtod(&lineBuf[1], nullptr);
-  }else if(lineBuf[0] == 'p') {
-    Kp = strtod(&lineBuf[1], nullptr);
-  }else if(lineBuf[0] == 'i') {
-    Ki = strtod(&lineBuf[1], nullptr);
-  }else if(lineBuf[0] == 'd') {
-    Kd = strtod(&lineBuf[1], nullptr);
+  if (lineBuf[0] == 'd') {
+    DT = strtod(&lineBuf[1], nullptr);
+    
   }else {
     Serial.printf("unknown serial input: '%s'\n", lineBuf);
   }
@@ -109,14 +96,6 @@ void loop()
   //温度計読み込み
   thermoCouple.read();
   temp = thermoCouple.getCelsius();
-
-  double e = target - temp;
-  sum_e += e;
-  DT = Kp*e + Ki*sum_e + Kd * (e - pre_e);
-
-  Serial.printf("DT:%f\ttarget:%.0f\tKp:%f\tKi:%f\tKd:%f\td:%f\n", DT,target,Kp,Ki,Kd,Kd*(e-pre_e));
-  
-  pre_e = e;
 
   if (DT < 0) DT = 0;
   if (DT > 1) DT = 1;
