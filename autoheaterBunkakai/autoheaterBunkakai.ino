@@ -169,11 +169,18 @@ void setup() {
 
   DT = (3.0/60)/k;
 
+  //終了時間表示用
+  double t0 = (double)millis()/1000;
+  double t1 = ((target - temp)/k) + t0;
+  double t2 = t1 + 30*60;
+  double t3 = (target2 - target)/k + t2;
+  double t4 = t3 - 90*60;
+
+
   double timestamp0 = (double)millis()/1000;//一分に一回出力見直し用タイムスタンプ
   start = (double)millis()/1000;
 
   psclear(ps,N);
-  start = (double)millis()/1000;
   i = 0;
 
   while (1){//target度まで温度上昇
@@ -209,9 +216,11 @@ void setup() {
     }
     pret = t;
 
+    int remtime = t4 - t;
+
     char buf[64];
     lcd.setCursor(0,0);
-    snprintf(buf, sizeof(buf), "k=%f", k);
+    snprintf(buf, sizeof(buf), "%.3f|%dm%ds", k, remtime/60,remtime%60);
     lcd.print(buf);
 
     lcd.setCursor(0,1);
@@ -250,9 +259,11 @@ void setup() {
     t = (double)millis()/1000;
     Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
 
+    int remtime = t4 - t;
+
     char buf[64];
     lcd.setCursor(0,0);
-    snprintf(buf, sizeof(buf), "Measuring...%d",i);
+    snprintf(buf, sizeof(buf), "....|%dm%ds",remtime/60,remtime%60);
     lcd.print(buf);
 
     lcd.setCursor(0,1);
@@ -279,7 +290,7 @@ void setup() {
 
   start = (double)millis()/1000;
   lcd.clear();
-  while ((double)millis()/1000 - start < 30*60){//target度で30分維持
+  while ((double)millis()/1000 - start < t2 - t1){//target度で30分維持
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
@@ -296,9 +307,11 @@ void setup() {
     t = (double)millis()/1000;
     Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
 
+    int remtime = t4 - t;
+
     char buf[64];
     lcd.setCursor(0,0);
-    snprintf(buf, sizeof(buf), "%.3f %.f", k,l);
+    snprintf(buf, sizeof(buf), "%dm%ds",remtime/60,remtime%60);
     lcd.print(buf);
 
     lcd.setCursor(0,1);
@@ -344,9 +357,11 @@ void setup() {
     t = (double)millis()/1000;
     Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
 
+    int remtime = t4 - t;
+
     char buf[64];
     lcd.setCursor(0,0);
-    snprintf(buf, sizeof(buf), "k=%f", k);
+    snprintf(buf, sizeof(buf), "%dm%ds", remtime/60,remtime%60);
     lcd.print(buf);
 
     lcd.setCursor(0,1);
@@ -361,7 +376,7 @@ void setup() {
   start = (double)millis()/1000;
   timestamp0 = start;
   lcd.clear();
-  while ((double)millis()/1000 - start < 90*60){//target2度で20分維持
+  while ((double)millis()/1000 - start < t4 - t3){//target2度で90分維持
     //温度計読み込み
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
@@ -378,9 +393,11 @@ void setup() {
     t = (double)millis()/1000;
     Serial.printf("%f\ttemp:%f\tDT:%f\n",t,temp,DT);
 
+    int remtime = 90*60 - ((double)millis()/1000 - start);
+
     char buf[64];
     lcd.setCursor(0,0);
-    snprintf(buf, sizeof(buf), "%.3f %.3f", k,l);
+    snprintf(buf, sizeof(buf), "%dm%ds", remtime/60,remtime%60);
     lcd.print(buf);
 
     lcd.setCursor(0,1);
@@ -389,6 +406,11 @@ void setup() {
 
     DTcont(DT);
   }
+
+  char buf[64];
+  lcd.setCursor(0,0);
+  snprintf(buf, sizeof(buf), "finish");
+  lcd.print(buf);
 
 }
 
