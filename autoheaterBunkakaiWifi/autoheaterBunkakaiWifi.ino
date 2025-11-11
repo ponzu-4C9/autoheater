@@ -113,7 +113,7 @@ void setup() {
   double t1 = ((target - temp)/k) + t0;
   double t2 = t1 + 30*60;
   double t3 = (target2 - target)/k + t2;
-  double t4 = t3 - 90*60;
+  double t4 = t3 + 90*60;
 
 
   double timestamp0 = (double)millis()/1000;//一分に一回出力見直し用タイムスタンプ

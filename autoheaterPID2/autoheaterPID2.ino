@@ -9,6 +9,9 @@ const int reset_button = 17;
 const int dataPin   = 8;  // SO
 const int clockPin  = 10; // SCK
 const int selectPin = 9; // CS
+// const int dataPin   = 4;//so
+// const int clockPin  = 23;//sck
+// const int selectPin = 19;//co
 
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27,20,4);
@@ -54,18 +57,18 @@ void setup() {
   
 
     if(20 < temp && temp < 1000){
-      if(temp > 50){
+      if(temp > 30){
         break;
       }
     }
 
-    DT = 0.02;//初期出力
+    DT = 0.13;//初期出力
     DTcont(DT);
     delay(1000);
 
     char buf[64];
     lcd.setCursor(0,0);
-    snprintf(buf, sizeof(buf), "%.2f", temp);
+    snprintf(buf, sizeof(buf), "%.2f  A", temp);
     lcd.print(buf);
     lcd.setCursor(0,1);
     snprintf(buf, sizeof(buf), "D:%.3f", DT);
@@ -73,8 +76,8 @@ void setup() {
 
   }
 
-  // === ランプ:  -> 90 ===
-  double target = 50.0;
+  // === ランプ:50 -> 90 ===
+  double target = temp;
   double pret = (double)millis() / 1000.0;
   while (target < 90.0) {
     thermoCouple.read();
@@ -116,7 +119,7 @@ void setup() {
   integral = 0.0; // 積分初期化
   lcd.clear();
 
-  while ((double)millis() / 1000.0 - start < 10.0 * 60.0) {
+  while ((double)millis() / 1000.0 - start < 30.0 * 60.0) {
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
@@ -189,7 +192,7 @@ void setup() {
     Serial.printf("%f\t temp:%f\t target:%f\t DT:%f\n", now, temp, target, DT);
   }
 
-  // === ホールド: target=130 を 10 分維持（積分有効） ===
+  // === ホールド: target=130 を 90 分維持（積分有効） ===
   target = 130.0;
   start = (double)millis() / 1000.0;
   pret = start;
@@ -197,7 +200,7 @@ void setup() {
   integral = 0.0;
   lcd.clear();
 
-  while ((double)millis() / 1000.0 - start < 10.0 * 60.0) {
+  while ((double)millis() / 1000.0 - start < 90.0 * 60.0) {
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
@@ -241,6 +244,6 @@ void loop() {
   lcd.clear();
   char buf[64];
   lcd.setCursor(0,0);
-  snprintf(buf, sizeof(buf), "%.2f", temp);
+  snprintf(buf, sizeof(buf), "fin|%.2f", temp);
   lcd.print(buf);
 }
