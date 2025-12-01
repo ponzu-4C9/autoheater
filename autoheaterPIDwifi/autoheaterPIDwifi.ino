@@ -260,7 +260,7 @@ void loop() {
         client.println("<script>");
         client.println("const ctx=document.getElementById('chart').getContext('2d');");
         client.println("const chart=new Chart(ctx,{type:'line',data:{datasets:[{label:'温度',data:[],borderColor:'#ff6b35',backgroundColor:'rgba(255,107,53,0.1)',tension:0.4,borderWidth:3,pointRadius:0}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{type:'linear',title:{display:true,text:'時間 (分)',color:'#888'},ticks:{color:'#666'},grid:{color:'#2a2a2a'}},y:{title:{display:true,text:'温度 (°C)',color:'#888'},ticks:{color:'#666'},grid:{color:'#2a2a2a'}}},plugins:{legend:{labels:{color:'#e0e0e0'}}}}});");
-        client.println("const states=['初期加熱','90℃まで昇温','90℃保持','130℃まで昇温','130℃保持','完了'];");
+        client.println("const states=['初期加熱','90℃まで昇温','90℃保持','130℃まで昇温','130℃保持','降温','完了'];");
         client.println("function formatTime(sec){");
         client.println("if(sec<0)return '計算中...';");
         client.println("const h=Math.floor(sec/3600);");
@@ -315,7 +315,6 @@ void loop() {
       case 1:
         {
           target += dt * rc;
-          if (target > 90.0) target = 90.0;
           double de_dt = (e - pre_e) / dt;
           DT = Kp * e + Kd * de_dt;
           pre_e = e;
@@ -341,7 +340,6 @@ void loop() {
       case 3:
         {
           target += dt * rc;
-          if (target > 130.0) target = 130.0;
           double de_dt = (e - pre_e) / dt;
           DT = Kp * e + Kd * de_dt;
           pre_e = e;
@@ -364,11 +362,18 @@ void loop() {
           pre_e = e;
           break;
         }
-      case 5:
+      case 5: //温度をゆっくり下げ
         {
-          DT = 0;
+          target -= dt * rc;
+          double de_dt = (e - pre_e) / dt;
+          DT = Kp * e + Kd * de_dt;
+          pre_e = e;
           break;
         }
+      case 6:
+      {
+        break;
+      }
     }
 
     heater.setDuty(DT);
@@ -426,6 +431,9 @@ void loop() {
         state4start = gettime();
       } else if (state == 4 && gettime() - state4start > 90 * 60) {
         state = 5;
+        
+      }else if(state == 5 && temp <= 40){
+        state = 6;
         DT = 0;
       }
     }
