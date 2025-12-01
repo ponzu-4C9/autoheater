@@ -55,9 +55,13 @@ double gettime() {
 }
 
 
-// 終了予想時刻を計算（秒単位で返す）
+// ---------------------------------------------------------
+// 修正箇所：終了予想時刻を計算（秒単位で返す）
+// ---------------------------------------------------------
 double calculateEstimatedEnd() {
   double remainingTime = 0;
+  // 降温にかかる時間 (130度 -> 40度 @ 3度/分) = 30分 = 1800秒
+  double coolingTimeFull = (130.0 - 40.0) / 3.0 * 60.0;
 
   switch (state) {
     case 0:
@@ -66,26 +70,36 @@ double calculateEstimatedEnd() {
     case 1:
       // 90℃まで: (90 - 現在温度) / (3℃/分) * 60秒
       remainingTime = (90.0 - temp) / 3.0 * 60.0;
-      // + state2の30分 + state3の(130-90) + state4の90分
-      remainingTime += 30 * 60 + (130.0 - 90.0) / 3.0 * 60.0 + 90 * 60;
+      // + state2(30分) + state3(昇温) + state4(90分) + state5(降温)
+      remainingTime += 30 * 60 + (130.0 - 90.0) / 3.0 * 60.0 + 90 * 60 + coolingTimeFull;
       break;
     case 2:
       // 残りの保持時間
       remainingTime = 30 * 60 - (gettime() - state2start);
-      // + state3の(130-90) + state4の90分
-      remainingTime += (130.0 - 90.0) / 3.0 * 60.0 + 90 * 60;
+      // + state3(昇温) + state4(90分) + state5(降温)
+      remainingTime += (130.0 - 90.0) / 3.0 * 60.0 + 90 * 60 + coolingTimeFull;
       break;
     case 3:
       // 130℃まで: (130 - 現在温度) / (3℃/分) * 60秒
       remainingTime = (130.0 - temp) / 3.0 * 60.0;
-      // + state4の90分
-      remainingTime += 90 * 60;
+      // + state4(90分) + state5(降温)
+      remainingTime += 90 * 60 + coolingTimeFull;
       break;
     case 4:
       // 残りの保持時間
       remainingTime = 90 * 60 - (gettime() - state4start);
+      // + state5(降温)
+      remainingTime += coolingTimeFull;
       break;
     case 5:
+      // 降温中 (現在温度 -> 40度)
+      if (temp > 40.0) {
+        remainingTime = (temp - 40.0) / 3.0 * 60.0;
+      } else {
+        remainingTime = 0;
+      }
+      break;
+    case 6: // 完了
       remainingTime = 0;
       break;
   }
@@ -93,7 +107,9 @@ double calculateEstimatedEnd() {
   return remainingTime;
 }
 
-// 現在のstateの終了予想時刻を計算
+// ---------------------------------------------------------
+// 修正箇所：現在のstateの終了予想時刻を計算
+// ---------------------------------------------------------
 double calculateStateEnd() {
   double remainingTime = 0;
 
@@ -117,12 +133,21 @@ double calculateStateEnd() {
       remainingTime = 90 * 60 - (gettime() - state4start);
       break;
     case 5:
+      // 40℃まで降温
+      if (temp > 40.0) {
+        remainingTime = (temp - 40.0) / 3.0 * 60.0;
+      } else {
+        remainingTime = 0;
+      }
+      break;
+    case 6:
       remainingTime = 0;
       break;
   }
 
   return remainingTime;
 }
+
 
 void setup() {
   Serial.begin(115200);
@@ -371,9 +396,9 @@ void loop() {
           break;
         }
       case 6:
-      {
-        break;
-      }
+        {
+          break;
+        }
     }
 
     heater.setDuty(DT);
@@ -395,7 +420,7 @@ void loop() {
       snprintf(buf, sizeof(buf), "%s", IP.c_str());
       lcd.print(buf);
       lcd.setCursor(0, 1);
-      snprintf(buf, sizeof(buf), "%d,%.0f,D:%.3f", state,temp, DT);
+      snprintf(buf, sizeof(buf), "%d,%.0f,D:%.3f", state, temp, DT);
       lcd.print(buf);
     } else {
       lcd.setCursor(0, 0);
@@ -431,8 +456,8 @@ void loop() {
         state4start = gettime();
       } else if (state == 4 && gettime() - state4start > 90 * 60) {
         state = 5;
-        
-      }else if(state == 5 && temp <= 40){
+
+      } else if (state == 5 && temp <= 40) {
         state = 6;
         DT = 0;
       }
