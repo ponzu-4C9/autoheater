@@ -13,6 +13,9 @@ const int dataPin = 8;
 const int clockPin = 10;
 const int selectPin = 9;
 
+#define temp_one 90
+#define temp_two 130
+
 // --- 制御パラメータ ---
 double Kp = 0.15;
 double Kd = 0.5;
@@ -334,12 +337,13 @@ void loop() {
     switch (state) {
       case 0:
         {
-          DT = 0.13;
+          DT = 0.15;
           break;
         }
       case 1:
         {
           target += dt * rc;
+          if(target > temp_one){target = temp_one};
           double de_dt = (e - pre_e) / dt;
           DT = Kp * e + Kd * de_dt;
           pre_e = e;
@@ -365,6 +369,7 @@ void loop() {
       case 3:
         {
           target += dt * rc;
+          if(target > temp_two){target = temp_two};
           double de_dt = (e - pre_e) / dt;
           DT = Kp * e + Kd * de_dt;
           pre_e = e;
@@ -438,7 +443,7 @@ void loop() {
         pre_e = 0.0;
         startTime = gettime();
         dataCount = 0;
-      } else if (state == 1 && 90 <= target) {
+      } else if (state == 1 && temp_one <= temp) {
         state = 2;
         target = 90.0;
         integral = 0.0;
@@ -448,7 +453,7 @@ void loop() {
         state = 3;
         target = 90.0;  // 現在温度から開始
         pre_e = 0.0;
-      } else if (state == 3 && 130 <= target) {
+      } else if (state == 3 && temp_two <= temp) {
         state = 4;
         target = 130.0;
         integral = 0.0;

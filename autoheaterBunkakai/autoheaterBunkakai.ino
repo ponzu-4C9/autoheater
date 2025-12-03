@@ -3,14 +3,12 @@
 
 //SCL GPIO22
 //SDA GPIO21
-const int PWM_Freq  =   5;
-const int PWM_Bit   =   8;
 
-const int SSRPin = 15;
+const int SSRPin = 2;
 
-const int dataPin   = 4;//so
-const int clockPin  = 23;//sck
-const int selectPin = 19;//co
+const int dataPin = 8; //so
+const int clockPin = 10; // sck
+const int selectPin = 9; //co
 
 #define target 90
 #define target2 130
