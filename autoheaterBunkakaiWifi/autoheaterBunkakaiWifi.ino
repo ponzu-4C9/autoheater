@@ -4,7 +4,6 @@
 #include <WebServer.h>
 #include "linearRegressionSlope.h"
 #include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
 
 // --- Wi-Fi 設定 ---
 #define ssid "SRAS2G"
@@ -17,17 +16,16 @@ const int clockPin = 10;  // sck
 const int selectPin = 9;  // co
 
 // --- 定数定義 ---
-#define target 90       // 90℃
-#define t2_to_t1 30 * 60  // 30分
-#define target2 130       // 130℃
-#define t4_to_t3 90 * 60  // 一時間半
-#define roomtemp 20       // 室温
+const int target 90;       // 90℃
+const int t2_to_t1 30 * 60;  // 30分
+const int target2 130;       // 130℃
+const int t4_to_t3 90 * 60;  // 一時間半
+const int roomtemp 20;       // 室温
 
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 WebServer server(80);
 
-// 変数は volatile のままにして、最新の値をメモリから読み込むようにします
 volatile double DT;
 volatile double temp;
 volatile int state = 0;
@@ -35,13 +33,6 @@ volatile double k;
 volatile double l;
 volatile double t;
 
-// WebTaskからはMutexを削除しますが、ControlTask側での書き込み競合を防ぐためにハンドル自体は残しても良いですが、
-// 今回の要件ではWeb側でのロックを外すため、ControlTask側も単独で動く形になります。
-// ただし、ControlTask同士や他の重要な場所での保護が必要なら残すべきですが、
-// 今回は「WebTask内の保護をなくす」ことに注力します。
-// ※ControlTask内でのMutex使用も、WebTaskがロックしないなら実質意味をなさなくなりますが、
-//   コードの整合性を保つため定義自体は残し、Web側だけ外します。
-SemaphoreHandle_t xDataMutex;
 
 const int HISTORY_MAX = 1000;
 Point webHistory[HISTORY_MAX];
@@ -229,6 +220,7 @@ void ControlTask(void *pvParameters) {
   DT = -dk / k;
 
   start = (double)millis() / 1000;
+  timestamp0 = start;
   lcd.clear();
   while ((double)millis() / 1000 - start < t2_to_t1) {
     thermoCouple.read();
@@ -440,7 +432,7 @@ update();setInterval(update,2000);
 }
 
 void handleData() {
-  // Mutexを削除し、直接グローバル変数を参照します
+  
   double currentTemp = temp;
   double currentDT = DT;
   double currentK = k;
@@ -506,7 +498,7 @@ void webTask(void *pvParameters) {
 
   unsigned long lastRecordTime = 0;
   
-  // Mutex削除、直接代入
+  
   lastState = state;
   
   stateStartTime = millis() / 1000;
@@ -516,7 +508,7 @@ void webTask(void *pvParameters) {
 
     unsigned long currentSec = millis() / 1000;
 
-    // Mutex削除、直接読み込み
+    
     double currentTemp = temp;
     int currentState = state;
 
@@ -595,7 +587,7 @@ void webTask(void *pvParameters) {
         newPredictedTotalEnd = newPredictedStateEnd + futureTime;
       }
 
-      // Mutex削除、直接書き込み
+      
       predictedStateEnd = newPredictedStateEnd;
       predictedTotalEnd = newPredictedTotalEnd;
     }
@@ -607,15 +599,7 @@ void webTask(void *pvParameters) {
 void setup() {
   Serial.begin(115200);
 
-  xDataMutex = xSemaphoreCreateMutex();
-  if (xDataMutex == NULL) {
-    Serial.println("FATAL: Mutex creation failed!");
-    while (1);
-  }
   
-  // 初期化は一応Mutexを使っても使わなくてもControlTaskが動く前なので問題ないですが、
-  // コードの一貫性のためセットアップ時は念のため残すか、あるいはここも直接代入で構いません。
-  // 今回は競合しないので直接代入します。
   DT = 0;
   temp = roomtemp;
   k = 0;
