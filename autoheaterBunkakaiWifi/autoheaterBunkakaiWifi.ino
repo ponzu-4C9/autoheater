@@ -2,39 +2,32 @@
 #include <LiquidCrystal_I2C.h>
 #include <WiFi.h>
 #include <WebServer.h>
-#include "linearRegressionSlope.h" // 外部ファイルと仮定
+#include "linearRegressionSlope.h"
 #include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h> // Mutex/Semaphore のためのヘッダー
+#include <freertos/semphr.h>
 
-// --- Wi-Fi 設定 (ここを書き換えてください) ---
+// --- Wi-Fi 設定 ---
 #define ssid "SRAS2G"
 #define EAP_USERNAME "al25138"
 #define EAP_PASSWORD "QFgGQfgGQfiH"
 
-
 const int SSRPin = 2;
-
-const int dataPin = 8; //so
-const int clockPin = 10; // sck
-const int selectPin = 9; //co
+const int dataPin = 8;    // so
+const int clockPin = 10;  // sck
+const int selectPin = 9;  // co
 
 // --- 定数定義 ---
-#define target 90         // 90℃
-#define t2_to_t1 30 * 60  // 30分
-#define target2 130       // 130℃
-#define t4_to_t3 90 * 60  // 一時間半
-
-#define roomtemp 20  // 室温
-
+#define target 90       // 90℃
+#define t2_to_t1 30 * 60  // 30分
+#define target2 130       // 130℃
+#define t4_to_t3 90 * 60  // 一時間半
+#define roomtemp 20       // 室温
 
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 WebServer server(80);
 
-// =======================================================
-// ★ 修正点 1: 共有変数に volatile を追加し、Mutexを定義
-// =======================================================
-// volatile: コンパイラ最適化を防ぎ、常にメモリから値を読み込ませる
+// 変数は volatile のままにして、最新の値をメモリから読み込むようにします
 volatile double DT;
 volatile double temp;
 volatile int state = 0;
@@ -42,13 +35,16 @@ volatile double k;
 volatile double l;
 volatile double t;
 
-// Mutex (排他制御) のハンドルを定義
+// WebTaskからはMutexを削除しますが、ControlTask側での書き込み競合を防ぐためにハンドル自体は残しても良いですが、
+// 今回の要件ではWeb側でのロックを外すため、ControlTask側も単独で動く形になります。
+// ただし、ControlTask同士や他の重要な場所での保護が必要なら残すべきですが、
+// 今回は「WebTask内の保護をなくす」ことに注力します。
+// ※ControlTask内でのMutex使用も、WebTaskがロックしないなら実質意味をなさなくなりますが、
+//   コードの整合性を保つため定義自体は残し、Web側だけ外します。
 SemaphoreHandle_t xDataMutex;
 
 const int HISTORY_MAX = 1000;
-// 履歴データは webTask のみが書き込むため、volatile は不要。
-// ControlTaskは読み込まないのでMutexも必須ではないが、もし将来ControlTaskが参照するなら必要。
-Point webHistory[HISTORY_MAX]; 
+Point webHistory[HISTORY_MAX];
 int historyCount = 0;
 
 volatile double predictedStateEnd = 0;
@@ -56,320 +52,296 @@ volatile double predictedTotalEnd = 0;
 volatile unsigned long stateStartTime = 0;
 volatile int lastState = -1;
 
-
 void DTcont(double duty) {
-  // ControlTaskに触らないという制約があるため、この関数は変更しません。
-  if (isnan(duty)) duty = 0;
-  if (duty < 0) duty = 0;
-  if (duty > 1) duty = 1;
-  digitalWrite(SSRPin, HIGH);
-  vTaskDelay((int)(1000 * duty));
-  digitalWrite(SSRPin, LOW);
-  vTaskDelay((int)(1000 * (1 - duty)));
+  if (isnan(duty)) duty = 0;
+  if (duty < 0) duty = 0;
+  if (duty > 1) duty = 1;
+  digitalWrite(SSRPin, HIGH);
+  vTaskDelay((int)(1000 * duty));
+  digitalWrite(SSRPin, LOW);
+  vTaskDelay((int)(1000 * (1 - duty)));
 }
 
 double pret = 0;
-// =======================================================
-// ControlTask関数はユーザーの要望により一切変更しません。
-// 内部でグローバル変数(temp, DT, k, l, state)を
-// 読み書きしていますが、これはwebTask側でMutexで保護します。
-// =======================================================
+
 void ControlTask(void *pvParameters) {
-  const int N = 2000;
-  static Point ps[N] = { 0 };
+  const int N = 2000;
+  static Point ps[N] = { 0 };
 
-  DT = 1;
-  double start = (double)millis() / 1000;
-  while ((double)millis() / 1000 - start < 60) {
-    thermoCouple.read();
-    temp = thermoCouple.getCelsius();
+  DT = 1;
+  double start = (double)millis() / 1000;
+  while ((double)millis() / 1000 - start < 60) {
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
 
-    char buf[64];
-    lcd.setCursor(0, 0);
-    snprintf(buf, sizeof(buf), "%.2f", (double)millis() / 1000 - start);
-    lcd.print(buf);
+    char buf[64];
+    lcd.setCursor(0, 0);
+    snprintf(buf, sizeof(buf), "%.2f", (double)millis() / 1000 - start);
+    lcd.print(buf);
 
-    lcd.setCursor(0, 1);
-    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
-    lcd.print(buf);
+    lcd.setCursor(0, 1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
 
-    t = (double)millis() / 1000;
-    if (t != pret) {
-      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
-    }
-    pret = t;
+    t = (double)millis() / 1000;
+    if (t != pret) {
+      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+    }
+    pret = t;
 
-    DTcont(DT);
-  }
-  state++;
+    DTcont(DT);
+  }
+  state++;
 
-  start = (double)millis() / 1000;
+  start = (double)millis() / 1000;
+  int i = 0;
 
-  int i = 0;
+  while ((double)millis() / 1000 - start < 70) {
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
 
-  while ((double)millis() / 1000 - start < 70) {
-    thermoCouple.read();
-    temp = thermoCouple.getCelsius();
+    ps[i].temp = (double)temp;
+    ps[i].timestamp = (double)millis() / 1000 - start;
 
-    ps[i].temp = (double)temp;
-    ps[i].timestamp = (double)millis() / 1000 - start;
+    k = linearRegressionSlope(ps, N) / DT;
 
-    k = linearRegressionSlope(ps, N) / DT;
+    char buf[64];
+    lcd.setCursor(0, 0);
+    snprintf(buf, sizeof(buf), "%.2f|%f", (double)millis() / 1000 - start, k);
+    lcd.print(buf);
 
-    char buf[64];
-    lcd.setCursor(0, 0);
-    snprintf(buf, sizeof(buf), "%.2f|%f", (double)millis() / 1000 - start, k);
-    lcd.print(buf);
+    lcd.setCursor(0, 1);
+    snprintf(buf, sizeof(buf), "%.2f|%.4f", temp, DT);
+    lcd.print(buf);
 
-    lcd.setCursor(0, 1);
-    snprintf(buf, sizeof(buf), "%.2f|%.4f", temp, DT);
-    lcd.print(buf);
+    t = (double)millis() / 1000;
+    if (t != pret) {
+      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+    }
+    pret = t;
 
-    t = (double)millis() / 1000;
-    if (t != pret) {
-      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
-    }
-    pret = t;
+    DTcont(DT);
+    i++;
+  }
+  state++;
 
-    DTcont(DT);
+  DT = (3.0 / 60) / k;
 
-    i++;
-  }
-  state++;
+  double timestamp0 = (double)millis() / 1000;
+  start = (double)millis() / 1000;
+  psclear(ps, N);
+  i = 0;
 
-  DT = (3.0 / 60) / k;
+  while (1) {
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
 
+    if (10 < temp && temp < 500) {
+      if (temp > target) {
+        break;
+      }
+    }
 
-  double timestamp0 = (double)millis() / 1000;
-  start = (double)millis() / 1000;
+    if (i < N) {
+      ps[i].temp = (double)temp;
+      ps[i].timestamp = (double)millis() / 1000 - start;
+      i++;
+    }
 
-  psclear(ps, N);
-  i = 0;
+    if ((double)millis() / 1000 - timestamp0 > 60) {
+      if (linearRegressionSlope(ps, N) > (3.0 / 60)) {
+        DT -= 0.01;
+      } else {
+        DT += 0.005;
+      }
+      psclear(ps, N);
+      start = (double)millis() / 1000;
+      i = 0;
+      timestamp0 = (double)millis() / 1000;
+    }
 
-  while (1) {
-    //温度計読み込み
-    thermoCouple.read();
-    temp = thermoCouple.getCelsius();
+    double t = (double)millis() / 1000;
+    if (t != pret) {
+      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+    }
+    pret = t;
 
-    if (10 < temp && temp < 500) {
-      if (temp > target) {
-        break;
-      }
-    }
+    char buf[64];
+    lcd.setCursor(0, 0);
+    snprintf(buf, sizeof(buf), "%f", k);
+    lcd.print(buf);
 
-    if (i < N) {
-      ps[i].temp = (double)temp;
-      ps[i].timestamp = (double)millis() / 1000 - start;
-      i++;
-    }
+    lcd.setCursor(0, 1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
 
+    DTcont(DT);
+  }
+  state++;
 
-    if ((double)millis() / 1000 - timestamp0 > 60) {
-      if (linearRegressionSlope(ps, N) > (3.0 / 60)) {
-        DT -= 0.01;
-      } else {
-        DT += 0.005;
-      }
-      psclear(ps, N);
-      start = (double)millis() / 1000;
-      i = 0;
-      timestamp0 = (double)millis() / 1000;
-    }
+  DT = 0;
+  psclear(ps, N);
 
-    double t = (double)millis() / 1000;
-    if (t != pret) {
-      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
-    }
-    pret = t;
+  double max_temp = 0;
+  int max_i = 0;
+  start = (double)millis() / 1000;
+  i = 0;
+  while (1) {
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
 
-    char buf[64];
-    lcd.setCursor(0, 0);
-    snprintf(buf, sizeof(buf), "%f", k);
-    lcd.print(buf);
+    if (temp < target - 2 || i >= N) {
+      break;
+    }
 
-    lcd.setCursor(0, 1);
-    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
-    lcd.print(buf);
+    if (temp > max_temp) {
+      max_temp = temp;
+      max_i = i;
+    }
 
-    DTcont(DT);
-  }
-  state++;
+    ps[i].timestamp = (double)millis() / 1000 - start;
+    ps[i].temp = temp;
+    i++;
 
-  DT = 0;
+    t = (double)millis() / 1000;
+    Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
 
-  psclear(ps, N);
+    char buf[64];
+    lcd.setCursor(0, 0);
+    snprintf(buf, sizeof(buf), "....");
+    lcd.print(buf);
 
-  double max_temp = 0;
-  int max_i = 0;
-  start = (double)millis() / 1000;
-  i = 0;
-  while (1) {
-    //温度計読み込み
-    thermoCouple.read();
-    temp = thermoCouple.getCelsius();
+    lcd.setCursor(0, 1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
 
-    if (temp < target - 2 || i >= N) {
-      break;
-    }
+    DTcont(DT);
+  }
+  state++;
 
-    if (temp > max_temp) {
-      max_temp = temp;
-      max_i = i;
-    }
+  for (i = 0; i < max_i; i++) {
+    ps[i].timestamp = 0.0;
+    ps[i].temp = 0.0;
+  }
 
-    ps[i].timestamp = (double)millis() / 1000 - start;
-    ps[i].temp = temp;
-    i++;
+  double dk = linearRegressionSlope(ps, N);
+  l = dk / (target - roomtemp);
+  DT = -dk / k;
 
-    t = (double)millis() / 1000;
-    Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+  start = (double)millis() / 1000;
+  lcd.clear();
+  while ((double)millis() / 1000 - start < t2_to_t1) {
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
 
-    char buf[64];
-    lcd.setCursor(0, 0);
-    snprintf(buf, sizeof(buf), "....");
-    lcd.print(buf);
+    if ((double)millis() / 1000 - timestamp0 > 180) {
+      if (temp > target) {
+        DT -= 0.01;
+      } else if (temp < target) {
+        DT += 0.01;
+      }
+      timestamp0 = (double)millis() / 1000;
+    }
 
-    lcd.setCursor(0, 1);
-    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
-    lcd.print(buf);
+    t = (double)millis() / 1000;
+    Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
 
-    DTcont(DT);
-  }
-  state++;
+    char buf[64];
+    lcd.setCursor(0, 1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
 
-  //最大値を迎えた時間より以前をすべて無効点にする
-  for (i = 0; i < max_i; i++) {
-    ps[i].timestamp = 0.0;
-    ps[i].temp = 0.0;
-  }
+    DTcont(DT);
+  }
+  state++;
 
-  //dT/dtを調べる
-  double dk = linearRegressionSlope(ps, N);
+  DT = ((3.0 / 60) - l * (temp - roomtemp)) / k;
 
-  //ニュートンの冷却法則の式の比例定数を出す
-  l = dk / (target - roomtemp);
-  //最適な出力を
-  DT = -dk / k;
+  psclear(ps, N);
+  start = (double)millis() / 1000;
+  i = 0;
 
-  start = (double)millis() / 1000;
-  lcd.clear();
-  while ((double)millis() / 1000 - start < t2_to_t1) {
-    //温度計読み込み
-    thermoCouple.read();
-    temp = thermoCouple.getCelsius();
+  while (1) {
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
 
-    if ((double)millis() / 1000 - timestamp0 > 180) {
-      if (temp > target) {
-        DT -= 0.01;
-      } else if (temp < target) {
-        DT += 0.01;
-      }
-      timestamp0 = (double)millis() / 1000;
-    }
+    if (10 < temp && temp < 500) {
+      if (temp > target2) {
+        break;
+      }
+    }
+    if (i < N) {
+      ps[i].temp = (double)temp;
+      ps[i].timestamp = (double)millis() / 1000 - start;
+      i++;
+    }
 
-    t = (double)millis() / 1000;
-    Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+    if ((double)millis() / 1000 - timestamp0 > 60) {
+      if (linearRegressionSlope(ps, N) > (3.0 / 60)) {
+        DT -= 0.01;
+      } else {
+        DT += 0.01;
+      }
+      psclear(ps, N);
+      start = (double)millis() / 1000;
+      i = 0;
+      timestamp0 = (double)millis() / 1000;
+    }
 
-    char buf[64];
-    lcd.setCursor(0, 1);
-    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
-    lcd.print(buf);
+    t = (double)millis() / 1000;
+    Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
 
-    DTcont(DT);
-  }
-  state++;
+    char buf[64];
+    lcd.setCursor(0, 1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
 
-  DT = ((3.0 / 60) - l * (temp - roomtemp)) / k;
+    DTcont(DT);
+  }
+  state++;
 
-  psclear(ps, N);
-  start = (double)millis() / 1000;
-  i = 0;
+  DT = (-l / k) * (target2 - roomtemp);
 
-  while (1) {
-    //温度計読み込み
-    thermoCouple.read();
-    temp = thermoCouple.getCelsius();
+  start = (double)millis() / 1000;
+  timestamp0 = start;
+  lcd.clear();
+  while ((double)millis() / 1000 - start < t4_to_t3) {
+    thermoCouple.read();
+    temp = thermoCouple.getCelsius();
 
-    if (10 < temp && temp < 500) {
-      if (temp > target2) {
-        break;
-      }
-    }
-    if (i < N) {
-      ps[i].temp = (double)temp;
-      ps[i].timestamp = (double)millis() / 1000 - start;
-      i++;
-    }
+    if ((double)millis() / 1000 - timestamp0 > 80) {
+      if (temp > target2) {
+        DT -= 0.01;
+      } else if (temp < target2) {
+        DT += 0.01;
+      }
+      timestamp0 = (double)millis() / 1000;
+    }
 
+    t = (double)millis() / 1000;
+    Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
 
-    if ((double)millis() / 1000 - timestamp0 > 60) {
-      if (linearRegressionSlope(ps, N) > (3.0 / 60)) {
-        DT -= 0.01;
-      } else {
-        DT += 0.01;
-      }
-      psclear(ps, N);
-      start = (double)millis() / 1000;
-      i = 0;
-      timestamp0 = (double)millis() / 1000;
-    }
+    char buf[64];
+    lcd.setCursor(0, 1);
+    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
+    lcd.print(buf);
 
-    t = (double)millis() / 1000;
-    Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+    DTcont(DT);
+  }
+  state++;
 
-    char buf[64];
-    lcd.setCursor(0, 1);
-    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
-    lcd.print(buf);
+  char buf2[64];
+  lcd.setCursor(0, 0);
+  snprintf(buf2, sizeof(buf2), "Finished!");
+  lcd.print(buf2);
 
-    DTcont(DT);
-  }
-  state++;
-
-  DT = (-l / k) * (target2 - roomtemp);
-
-  start = (double)millis() / 1000;
-  timestamp0 = start;
-  lcd.clear();
-  while ((double)millis() / 1000 - start < t4_to_t3) {
-    //温度計読み込み
-    thermoCouple.read();
-    temp = thermoCouple.getCelsius();
-
-    if ((double)millis() / 1000 - timestamp0 > 80) {
-      if (temp > target2) {
-        DT -= 0.01;
-      } else if (temp < target2) {
-        DT += 0.01;
-      }
-      timestamp0 = (double)millis() / 1000;
-    }
-
-    t = (double)millis() / 1000;
-    Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
-
-    char buf[64];
-    lcd.setCursor(0, 1);
-    snprintf(buf, sizeof(buf), "%.2f|%.2f", temp, DT);
-    lcd.print(buf);
-
-    DTcont(DT);
-  }
-  state++;
-
-  char buf[64];
-  lcd.setCursor(0, 0);
-  snprintf(buf, sizeof(buf), "Finished!");
-  lcd.print(buf);
-
-  while (1) {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
+  while (1) {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
 }
-// HTMLを配信するハンドラ
+
 void handleRoot() {
-  // 生文字列リテラルでHTMLを定義
-  const char *html = R"raw(
+  const char *html = R"raw(
 HTTP/1.1 200 OK
 Content-Type: text/html
 Connection: close
@@ -412,7 +384,6 @@ h1{font-size:2.5em;margin-bottom:30px;color:#ff6b35;text-align:center;text-shado
 <div class='card'><h3>状態</h3><div class='value' id='state'>--</div></div>
 <div class='card'><h3>経過時間</h3><div class='value' id='time'>--</div><span class='unit'>分</span></div>
 </div>
-<!-- ★ 修正点 2: k, l, DT の表示カードを追加 -->
 <div class='stats'>
 <div class='card'><h3>熱効率 K</h3><div class='value small-value' id='k_val'>--</div><span class='unit'>°C/sec / DT</span></div>
 <div class='card'><h3>放熱係数 L</h3><div class='value small-value' id='l_val'>--</div><span class='unit'>/sec/°C</span></div>
@@ -448,14 +419,11 @@ stateEl.textContent=states[d.state] || '不明';
 stateEl.className='value state-'+d.state;
 document.getElementById('time').textContent=d.time.toFixed(0);
 
-// ★ 修正点 3: k, l, DT の値をHTMLに反映
 document.getElementById('k_val').textContent=d.k_val.toFixed(4);
 document.getElementById('l_val').textContent=d.l_val.toFixed(6);
 document.getElementById('dt_val').textContent=d.DT_val.toFixed(3);
 
-
-// 予想時間は秒表記に修正
-document.getElementById('stateEnd').textContent=d.stateEnd; // formatTimeは秒単位
+document.getElementById('stateEnd').textContent=d.stateEnd;
 document.getElementById('totalEnd').textContent=d.totalEnd;
 
 document.getElementById('update').textContent=new Date().toLocaleTimeString('ja-JP');
@@ -468,279 +436,221 @@ update();setInterval(update,2000);
 </body>
 </html>
 )raw";
-  server.sendContent(html);
+  server.sendContent(html);
 }
 
-// JSONデータを配信するハンドラ
 void handleData() {
-  // 読み取り用の一時変数
-  double currentTemp, currentDT, currentK, currentL, currentTarget;
-  int currentState;
-  double currentPredictedStateEnd, currentPredictedTotalEnd;
-  double elapsedMin;
+  // Mutexを削除し、直接グローバル変数を参照します
+  double currentTemp = temp;
+  double currentDT = DT;
+  double currentK = k;
+  double currentL = l;
+  int currentState = state;
+  double currentPredictedStateEnd = predictedStateEnd;
+  double currentPredictedTotalEnd = predictedTotalEnd;
+  double elapsedMin = 0;
+  
+  double currentTarget;
 
-  // =======================================================
-  // ★ 修正点 4: Mutexを取得し、共有変数を一時変数にコピー
-  // =======================================================
-  if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    currentTemp = temp;
-    currentDT = DT;
-    currentK = k;
-    currentL = l;
-    currentState = state;
-    currentPredictedStateEnd = predictedStateEnd;
-    currentPredictedTotalEnd = predictedTotalEnd;
+  String json = "{";
 
-    // ロック解除
-    xSemaphoreGive(xDataMutex);
-  } else {
-    // Mutex取得に失敗した場合（ControlTaskが忙しい）は、前回の値を送るか、エラー値を設定
-    currentTemp = isnan(temp) ? 0.0 : temp;
-    currentDT = 0.0;
-    currentK = 0.0;
-    currentL = 0.0;
-    currentState = 0;
-    currentPredictedStateEnd = -1;
-    currentPredictedTotalEnd = -1;
-  }
+  if (isnan(currentTemp)) json += "\"temp\":0.00,";
+  else json += "\"temp\":" + String(currentTemp, 2) + ",";
 
-  String json = "{";
+  if (currentState <= 4) currentTarget = target;
+  else currentTarget = target2;
 
-  // NaNチェック (念のため)
-  if (isnan(currentTemp)) json += "\"temp\":0.00,";
-  else json += "\"temp\":" + String(currentTemp, 2) + ",";
+  json += "\"target\":" + String(currentTarget) + ",";
+  json += "\"state\":" + String(currentState) + ",";
 
-  // 目標温度を計算
-  if (currentState <= 4) currentTarget = target;
-  else currentTarget = target2;
+  elapsedMin = (millis() / 1000.0) / 60.0;
+  json += "\"time\":" + String(elapsedMin, 1) + ",";
 
-  json += "\"target\":" + String(currentTarget) + ",";
-  json += "\"state\":" + String(currentState) + ",";
+  json += "\"k_val\":" + String(currentK, 6) + ",";
+  json += "\"l_val\":" + String(currentL, 6) + ",";
+  json += "\"DT_val\":" + String(currentDT, 3) + ",";
 
-  elapsedMin = (millis() / 1000.0) / 60.0;
-  json += "\"time\":" + String(elapsedMin, 1) + ",";
+  json += "\"stateEnd\":" + String(currentPredictedStateEnd, 0) + ",";
+  json += "\"totalEnd\":" + String(currentPredictedTotalEnd, 0) + ",";
 
-  // ★ 修正点 5: k, l, DT をJSONに追加
-  json += "\"k_val\":" + String(currentK, 6) + ",";
-  json += "\"l_val\":" + String(currentL, 6) + ",";
-  json += "\"DT_val\":" + String(currentDT, 3) + ",";
+  json += "\"history\":[";
+  for (int i = 0; i < historyCount; i++) {
+    json += "{\"t\":" + String(webHistory[i].timestamp / 60.0, 2) + ",\"v\":" + String(webHistory[i].temp, 1) + "}";
+    if (i < historyCount - 1) json += ",";
+  }
+  json += "]";
 
+  json += "}";
 
-  json += "\"stateEnd\":" + String(currentPredictedStateEnd, 0) + ",";
-  json += "\"totalEnd\":" + String(currentPredictedTotalEnd, 0) + ",";
+  Serial.println("--- Sending JSON ---");
+  Serial.println(json);
+  Serial.println("--------------------");
 
-  // グラフ用履歴データ
-  json += "\"history\":[";
-  // webTaskは履歴に書き込む際、Mutexは使っていませんが、
-  // handleDataは履歴の読み出しが終わるまで他の書き込みをブロックすべきです。
-  // しかし、ここではwebTaskが履歴を書き込む頻度(30秒)が低いため、省略します。
-  for (int i = 0; i < historyCount; i++) {
-    json += "{\"t\":" + String(webHistory[i].timestamp / 60.0, 2) + ",\"v\":" + String(webHistory[i].temp, 1) + "}";
-    if (i < historyCount - 1) json += ",";
-  }
-  json += "]";
-
-  json += "}";
-
-  Serial.println("--- Sending JSON ---");
-  Serial.println(json);
-  Serial.println("--------------------");
-
-  server.send(200, "application/json", json);
+  server.send(200, "application/json", json);
 }
 
 void webTask(void *pvParameters) {
-  // Wi-Fi 接続
-  WiFi.begin(ssid, WPA2_AUTH_PEAP, EAP_USERNAME, EAP_USERNAME, EAP_PASSWORD);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    vTaskDelay(pdMS_TO_TICKS(500));
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
+  WiFi.begin(ssid, WPA2_AUTH_PEAP, EAP_USERNAME, EAP_USERNAME, EAP_PASSWORD);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    vTaskDelay(pdMS_TO_TICKS(500));
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 
-  // Webサーバー設定
-  server.on("/", handleRoot);
-  server.on("/data", handleData);
-  server.begin();
+  server.on("/", handleRoot);
+  server.on("/data", handleData);
+  server.begin();
 
-  unsigned long lastRecordTime = 0;
+  unsigned long lastRecordTime = 0;
+  
+  // Mutex削除、直接代入
+  lastState = state;
+  
+  stateStartTime = millis() / 1000;
 
-  // 状態監視用
-  // Mutexを一時的に使う
-  if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-    lastState = state;
-    xSemaphoreGive(xDataMutex);
-  }
-  
-  stateStartTime = millis() / 1000;
+  while (1) {
+    server.handleClient();
 
-  while (1) {
-    server.handleClient();
+    unsigned long currentSec = millis() / 1000;
 
-    unsigned long currentSec = millis() / 1000;
+    // Mutex削除、直接読み込み
+    double currentTemp = temp;
+    int currentState = state;
 
-    // ControlTaskの共有変数を保護して読み込み
-    double currentTemp = 0.0;
-    int currentState = 0;
+    if (currentState != lastState) {
+      stateStartTime = currentSec;
+      lastState = currentState;
+    }
 
-    if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-      currentTemp = temp;
-      currentState = state;
-      xSemaphoreGive(xDataMutex);
-    }
+    if (currentSec - lastRecordTime >= 30) {
+      lastRecordTime = currentSec;
 
-    // 状態変化検知 (開始時間をリセット)
-    if (currentState != lastState) {
-      stateStartTime = currentSec;
-      lastState = currentState;
-    }
+      if (historyCount < HISTORY_MAX) {
+        webHistory[historyCount].temp = currentTemp;
+        webHistory[historyCount].timestamp = (double)currentSec;
+        historyCount++;
+      }
 
-    // 30秒に1回 履歴保存 & 予測計算
-    if (currentSec - lastRecordTime >= 30) {
-      lastRecordTime = currentSec;
+      double elapsedInState = currentSec - stateStartTime;
+      double slope = 0;
 
-      // Point構造体に保存
-      if (historyCount < HISTORY_MAX) {
-        webHistory[historyCount].temp = currentTemp; // Mutexで保護された temp を使う
-        webHistory[historyCount].timestamp = (double)currentSec;  // 絶対時間
-        historyCount++;
-      }
+      int sampleCount = 0;
+      const int SAMPLE_SIZE = 10;
+      Point recentPoints[SAMPLE_SIZE];
 
-      // --- 予測ロジック ---
-      double elapsedInState = currentSec - stateStartTime;
-      double slope = 0;
+      for (int i = 0; i < SAMPLE_SIZE; i++) {
+        int idx = historyCount - 1 - i;
+        if (idx >= 0) {
+          recentPoints[i] = webHistory[idx];
+          recentPoints[i].timestamp -= (double)stateStartTime;
+          sampleCount++;
+        } else {
+          recentPoints[i].timestamp = 0;
+          recentPoints[i].temp = 0;
+        }
+      }
 
-      int sampleCount = 0;
-      const int SAMPLE_SIZE = 10;
-      Point recentPoints[SAMPLE_SIZE];
+      slope = linearRegressionSlope(recentPoints, sampleCount);
 
-      for (int i = 0; i < SAMPLE_SIZE; i++) {
-        int idx = historyCount - 1 - i;
-        if (idx >= 0) {
-          recentPoints[i] = webHistory[idx];
-          recentPoints[i].timestamp -= (double)stateStartTime;
-          sampleCount++;
-        } else {
-          recentPoints[i].timestamp = 0;
-          recentPoints[i].temp = 0;
-        }
-      }
+      double newPredictedStateEnd = -1;
+      double newPredictedTotalEnd = -1;
+      double timeRemState = 0;
 
-      // 傾き算出 (deg/sec)
-      slope = linearRegressionSlope(recentPoints, sampleCount);
+      if (currentState == 2) {
+        if (slope > 0.001) {
+          timeRemState = (target - currentTemp) / slope;
+          newPredictedStateEnd = timeRemState;
+        }
+      } else if (currentState == 4) {
+        double duration = t2_to_t1;
+        if (elapsedInState < duration) {
+          timeRemState = duration - elapsedInState;
+          newPredictedStateEnd = timeRemState;
+        } else {
+          newPredictedStateEnd = 0;
+        }
+      } else if (currentState == 5) {
+        if (slope > 0.001) {
+          timeRemState = (target2 - currentTemp) / slope;
+          newPredictedStateEnd = timeRemState;
+        }
+      } else if (currentState == 6) {
+        double duration = t4_to_t3;
+        if (elapsedInState < duration) {
+          timeRemState = duration - elapsedInState;
+          newPredictedStateEnd = timeRemState;
+        } else {
+          newPredictedStateEnd = 0;
+        }
+      }
 
-      // 残り時間計算
-      double newPredictedStateEnd = -1;
-      double newPredictedTotalEnd = -1;
+      if (newPredictedStateEnd != -1) {
+        double futureTime = 0;
+        if (currentState <= 3) futureTime += t2_to_t1;
+        if (currentState <= 4) futureTime += (target2 - target) / 0.05;
+        if (currentState <= 5) futureTime += t4_to_t3;
+        newPredictedTotalEnd = newPredictedStateEnd + futureTime;
+      }
 
-      // 状態ごとの予測
-      double timeRemState = 0;
+      // Mutex削除、直接書き込み
+      predictedStateEnd = newPredictedStateEnd;
+      predictedTotalEnd = newPredictedTotalEnd;
+    }
 
-      if (currentState == 2) {  // 90度まで昇温
-        if (slope > 0.001) {
-          timeRemState = (target - currentTemp) / slope;
-          newPredictedStateEnd = timeRemState;
-        }
-      } else if (currentState == 4) {  // 90度保持 (状態4に修正)
-        double duration = t2_to_t1;
-        if (elapsedInState < duration) {
-          timeRemState = duration - elapsedInState;
-          newPredictedStateEnd = timeRemState;
-        } else {
-          newPredictedStateEnd = 0;
-        }
-      } else if (currentState == 5) {  // 130度まで昇温
-        if (slope > 0.001) {
-          timeRemState = (target2 - currentTemp) / slope;
-          newPredictedStateEnd = timeRemState;
-        }
-      } else if (currentState == 6) {  // 130度保持
-        double duration = t4_to_t3;
-        if (elapsedInState < duration) {
-          timeRemState = duration - elapsedInState;
-          newPredictedStateEnd = timeRemState;
-        } else {
-          newPredictedStateEnd = 0;
-        }
-      }
-
-      // 全工程終了予想 (簡易計算)
-      // state: 0初期加熱, 1 k測定, 2 昇温T1, 3 l測定, 4 維持T1, 5 昇温T2, 6 維持T2, 7 完了
-      if (newPredictedStateEnd != -1) {
-        double futureTime = 0;
-
-        // 現在の状態から将来の保持時間を加算
-        if (currentState <= 3) futureTime += t2_to_t1;                   // 90度保持 (State 4)
-        if (currentState <= 4) futureTime += (target2 - target) / 0.05;  // 90->130昇温(State 5 - 理想値仮定)
-        if (currentState <= 5) futureTime += t4_to_t3;                   // 130度保持 (State 6)
-
-        newPredictedTotalEnd = newPredictedStateEnd + futureTime;
-      }
-
-      // Mutexを使い、予測結果の変数を保護して書き込み
-      if (xSemaphoreTake(xDataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        predictedStateEnd = newPredictedStateEnd;
-        predictedTotalEnd = newPredictedTotalEnd;
-        xSemaphoreGive(xDataMutex);
-      }
-    }
-
-    // ControlTaskが1秒ブロックするので、WebTaskは隙間で動く
-    vTaskDelay(pdMS_TO_TICKS(10));
-  }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);
 
-  // =======================================================
-  // ★ 修正点 6: Mutexの初期化
-  // =======================================================
-  xDataMutex = xSemaphoreCreateMutex();
-  if (xDataMutex == NULL) {
-    Serial.println("FATAL: Mutex creation failed!");
-    while (1);
-  }
-  // 初期値を入れておく（念のため）
-  xSemaphoreTake(xDataMutex, portMAX_DELAY);
-  DT = 0; temp = roomtemp; k = 0; l = 0; state = 0;
-  xSemaphoreGive(xDataMutex);
+  xDataMutex = xSemaphoreCreateMutex();
+  if (xDataMutex == NULL) {
+    Serial.println("FATAL: Mutex creation failed!");
+    while (1);
+  }
+  
+  // 初期化は一応Mutexを使っても使わなくてもControlTaskが動く前なので問題ないですが、
+  // コードの一貫性のためセットアップ時は念のため残すか、あるいはここも直接代入で構いません。
+  // 今回は競合しないので直接代入します。
+  DT = 0;
+  temp = roomtemp;
+  k = 0;
+  l = 0;
+  state = 0;
 
+  pinMode(SSRPin, OUTPUT);
 
-  pinMode(SSRPin, OUTPUT);
+  SPI.begin();
+  thermoCouple.begin();
+  thermoCouple.setSPIspeed(4000000);
+  delay(1000);
 
-  SPI.begin();
-  thermoCouple.begin();
-  thermoCouple.setSPIspeed(4000000);
-  delay(1000);
+  lcd.init();
+  lcd.backlight();
 
-  lcd.init();
-  lcd.backlight();
+  xTaskCreatePinnedToCore(
+    ControlTask,
+    "Control",
+    10000,
+    NULL,
+    2,
+    NULL,
+    0
+  );
 
-  // ControlTask はコア 0 (またはシングルコアのメイン)
-  xTaskCreatePinnedToCore(
-    ControlTask,
-    "Control",
-    10000,
-    NULL,
-    2,
-    NULL,
-    0             
-  );
-
-  // WebTask はコア 1 (または ControlTaskと競合しないコア)
-  xTaskCreatePinnedToCore(
-    webTask,
-    "Communication",
-    10000,
-    NULL,
-    1,
-    NULL,
-    1 // コア 1 に割り当てて、ControlTask (コア 0) との競合を減らす
-  );
+  xTaskCreatePinnedToCore(
+    webTask,
+    "Communication",
+    10000,
+    NULL,
+    1,
+    NULL,
+    1
+  );
 }
 
 void loop() {
