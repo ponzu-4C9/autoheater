@@ -16,11 +16,11 @@ const int clockPin = 10;  // sck
 const int selectPin = 9;  // co
 
 // --- 定数定義 ---
-const int target 90;       // 90℃
-const int t2_to_t1 30 * 60;  // 30分
-const int target2 130;       // 130℃
-const int t4_to_t3 90 * 60;  // 一時間半
-const int roomtemp 20;       // 室温
+const int target =90;       // 90℃
+const int t2_to_t1 =30 * 60;  // 30分
+const int target2 =130;       // 130℃
+const int t4_to_t3 =90 * 60;  // 一時間半
+const int roomtemp =20;       // 室温
 
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27, 20, 4);
@@ -61,7 +61,7 @@ void ControlTask(void *pvParameters) {
 
   DT = 1;
   double start = (double)millis() / 1000;
-  while ((double)millis() / 1000 - start < 60) {
+  while ((double)millis() / 1000 - start < 60) {//初期上昇
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
@@ -87,7 +87,7 @@ void ControlTask(void *pvParameters) {
   start = (double)millis() / 1000;
   int i = 0;
 
-  while ((double)millis() / 1000 - start < 70) {
+  while ((double)millis() / 1000 - start < 70) {//k測定
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
@@ -123,7 +123,7 @@ void ControlTask(void *pvParameters) {
   psclear(ps, N);
   i = 0;
 
-  while (1) {
+  while (1) {//昇温
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
@@ -177,7 +177,7 @@ void ControlTask(void *pvParameters) {
   int max_i = 0;
   start = (double)millis() / 1000;
   i = 0;
-  while (1) {
+  while (1) {//l測定
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
@@ -222,11 +222,11 @@ void ControlTask(void *pvParameters) {
   start = (double)millis() / 1000;
   timestamp0 = start;
   lcd.clear();
-  while ((double)millis() / 1000 - start < t2_to_t1) {
+  while ((double)millis() / 1000 - start < t2_to_t1) {//第一維持
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
-    if ((double)millis() / 1000 - timestamp0 > 180) {
+    if ((double)millis() / 1000 - timestamp0 > 70) {
       if (temp > target) {
         DT -= 0.01;
       } else if (temp < target) {
@@ -253,7 +253,7 @@ void ControlTask(void *pvParameters) {
   start = (double)millis() / 1000;
   i = 0;
 
-  while (1) {
+  while (1) {//第二昇温
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
@@ -297,11 +297,11 @@ void ControlTask(void *pvParameters) {
   start = (double)millis() / 1000;
   timestamp0 = start;
   lcd.clear();
-  while ((double)millis() / 1000 - start < t4_to_t3) {
+  while ((double)millis() / 1000 - start < t4_to_t3) {//第二維持
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
-    if ((double)millis() / 1000 - timestamp0 > 80) {
+    if ((double)millis() / 1000 - timestamp0 > 70) {
       if (temp > target2) {
         DT -= 0.01;
       } else if (temp < target2) {
@@ -633,7 +633,7 @@ void setup() {
     NULL,
     1,
     NULL,
-    1
+    0
   );
 }
 

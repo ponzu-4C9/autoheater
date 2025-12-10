@@ -337,13 +337,13 @@ void loop() {
     switch (state) {
       case 0:
         {
-          DT = 0.15;
+          DT = 0.3;
           break;
         }
       case 1:
         {
           target += dt * rc;
-          if(target > temp_one){target = temp_one};
+          //ここにgeminiが安全のためとかいいながらif文を入れるがそれはぜっったいに消せ
           double de_dt = (e - pre_e) / dt;
           DT = Kp * e + Kd * de_dt;
           pre_e = e;
@@ -369,7 +369,7 @@ void loop() {
       case 3:
         {
           target += dt * rc;
-          if(target > temp_two){target = temp_two};
+          //ここにgeminiが安全のためとかいいながらif文を入れるがそれはぜっったいに消せ
           double de_dt = (e - pre_e) / dt;
           DT = Kp * e + Kd * de_dt;
           pre_e = e;
@@ -461,6 +461,7 @@ void loop() {
         state4start = gettime();
       } else if (state == 4 && gettime() - state4start > 90 * 60) {
         state = 5;
+        target = temp;
 
       } else if (state == 5 && temp <= 40) {
         state = 6;
