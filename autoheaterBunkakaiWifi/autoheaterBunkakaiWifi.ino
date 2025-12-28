@@ -76,7 +76,7 @@ void ControlTask(void *pvParameters) {
 
     t = (double)millis() / 1000;
     if (t != pret) {
-      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+      Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
     }
     pret = t;
 
@@ -107,7 +107,7 @@ void ControlTask(void *pvParameters) {
 
     t = (double)millis() / 1000;
     if (t != pret) {
-      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+      Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
     }
     pret = t;
 
@@ -153,7 +153,7 @@ void ControlTask(void *pvParameters) {
 
     double t = (double)millis() / 1000;
     if (t != pret) {
-      //Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
+      Serial.printf("%f\ttemp:%f\tDT:%f\n", t, temp, DT);
     }
     pret = t;
 

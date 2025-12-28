@@ -420,24 +420,15 @@ void loop() {
     }
 
     char buf[64];
-    if (state == 0) {
-      lcd.setCursor(0, 0);
-      snprintf(buf, sizeof(buf), "%s", IP.c_str());
-      lcd.print(buf);
-      lcd.setCursor(0, 1);
-      snprintf(buf, sizeof(buf), "%d,%.0f,D:%.3f", state, temp, DT);
-      lcd.print(buf);
-    } else {
-      lcd.setCursor(0, 0);
-      snprintf(buf, sizeof(buf), "%.2f,%.2f", temp, target);
-      lcd.print(buf);
-      lcd.setCursor(0, 1);
-      snprintf(buf, sizeof(buf), "%d,D:%.3f", state, DT);
-      lcd.print(buf);
-    }
+    lcd.setCursor(0, 0);
+    snprintf(buf, sizeof(buf), "%s", IP.c_str());
+    lcd.print(buf);
+    lcd.setCursor(0, 1);
+    snprintf(buf, sizeof(buf), "%d,%.0f,%d", state, temp, (int)(DT*100));
+    lcd.print(buf);
 
     if (20 < temp && temp < 1000) {
-      if (state == 0 && 30 < temp) {
+      if (state == 0 && 10 < temp) {
         state = 1;
         target = temp;
         pre_e = 0.0;
@@ -463,7 +454,7 @@ void loop() {
         state = 5;
         target = temp;
 
-      } else if (state == 5 && temp <= 40) {
+      } else if (state == 5 && target <= 20) {
         state = 6;
         DT = 0;
       }
