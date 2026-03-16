@@ -127,6 +127,8 @@ void loop() {
     thermoCouple.read();
     currentTemp = thermoCouple.getCelsius();
 
+    Serial.printf("%d\ttemp:%f\tDT:%f\n", millis(), currentTemp, currentDT);
+
     // LCD更新
     if (Wstatus == WL_CONNECTED) {
       char buf[21];

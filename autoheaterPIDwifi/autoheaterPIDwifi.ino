@@ -424,11 +424,11 @@ void loop() {
     snprintf(buf, sizeof(buf), "%s", IP.c_str());
     lcd.print(buf);
     lcd.setCursor(0, 1);
-    snprintf(buf, sizeof(buf), "%d,%.0f,%d", state, temp, (int)(DT*100));
+    snprintf(buf, sizeof(buf), "%d,%.0f,%.0f,%d%", state, temp,target, (int)(DT*100));
     lcd.print(buf);
 
-    if (20 < temp && temp < 1000) {
-      if (state == 0 && 10 < temp) {
+    if (0 < temp && temp < 1000) {
+      if (state == 0) {
         state = 1;
         target = temp;
         pre_e = 0.0;

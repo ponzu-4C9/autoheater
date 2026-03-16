@@ -20,7 +20,7 @@ const int target =90;       // 90℃
 const int t2_to_t1 =30 * 60;  // 30分
 const int target2 =130;       // 130℃
 const int t4_to_t3 =90 * 60;  // 一時間半
-const int roomtemp =20;       // 室温
+const int roomtemp =15;       // 室温
 
 MAX6675 thermoCouple(selectPin, dataPin, clockPin);
 LiquidCrystal_I2C lcd(0x27, 20, 4);
@@ -301,7 +301,7 @@ void ControlTask(void *pvParameters) {
     thermoCouple.read();
     temp = thermoCouple.getCelsius();
 
-    if ((double)millis() / 1000 - timestamp0 > 70) {
+    if ((double)millis() / 1000 - timestamp0 > 120) {
       if (temp > target2) {
         DT -= 0.01;
       } else if (temp < target2) {
