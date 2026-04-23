@@ -56,6 +56,7 @@ const int MAX_POINTS = 720;
 Point dataPoints[MAX_POINTS];
 int dataCount = 0;
 double startTime = 0.0;  // 昇温開始時刻
+double lastSaveTime = 0.0;
 
 enum ProcessMode {
   MODE_FULL = 0,
@@ -640,7 +641,6 @@ void loop() {
     heater.setDuty(DT);
 
     // データ保存（30秒ごと）
-    static double lastSaveTime = 0;
     if (state > 0 && gettime() - lastSaveTime >= 30) {
       if (dataCount < MAX_POINTS) {
         dataPoints[dataCount].elapsedSec = gettime() - startTime;
@@ -664,10 +664,12 @@ void loop() {
     if (0 < temp && temp < 1000) {
       if (state == 0) {
         state = 1;
+        processMode = MODE_FULL;
         target = temp;
         pre_e = 0.0;
         startTime = gettime();
         dataCount = 0;
+        lastSaveTime = 0.0;
       } else if (state == 1 && temp_one <= temp) {
         if (processMode == MODE_FULL) {
           state = 2;
