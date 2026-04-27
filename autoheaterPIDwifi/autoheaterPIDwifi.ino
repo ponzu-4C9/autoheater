@@ -19,7 +19,7 @@ const int selectPin = 9;
 
 // --- 制御パラメータ ---
 double Kp = 0.15;
-double Kd = 0.5;
+double Kd = 0.2;
 double Ki = 0.01;
 const double Iterm_limit = 0.4;
 
